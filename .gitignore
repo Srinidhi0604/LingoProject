@@ -43,3 +43,18 @@ src/app/lingo/
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# voxera context files (AI editor context)
+.voxera-context/
+AGENTS.md
+context.md
+architecture.md
+current-state.md
+dev-server.md
+filesystem-orchestrator.md
+lingo-integration.md
+project-goals.md
+voice-intent-pipeline.md
+
+# workspace user data
+workspaces/
