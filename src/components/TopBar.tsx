@@ -1,16 +1,25 @@
 "use client";
 
-import { useState } from "react";
-import { Mic, Settings, Layout, Terminal, Play, Github } from "lucide-react";
+import { Mic, Settings, Layout, Terminal, Play, PanelLeft, PanelRight, PanelBottom, MessagesSquare } from "lucide-react";
 
 interface TopBarProps {
   projectName: string;
   mode: "agent" | "ide";
   onModeChange: (mode: "agent" | "ide") => void;
   fileCount: number;
+  layoutControls?: {
+    explorerVisible: boolean;
+    terminalVisible: boolean;
+    previewDock: "right" | "bottom" | "hidden";
+    agentDock: "right" | "bottom" | "hidden";
+    onToggleExplorer: () => void;
+    onToggleTerminal: () => void;
+    onCyclePreviewDock: () => void;
+    onCycleAgentDock: () => void;
+  };
 }
 
-export default function TopBar({ projectName, mode, onModeChange, fileCount }: TopBarProps) {
+export default function TopBar({ projectName, mode, onModeChange, fileCount, layoutControls }: TopBarProps) {
   return (
     <div className="h-12 bg-[#0A0A0A] border-b border-white/10 flex items-center justify-between px-4 select-none">
       <div className="flex items-center gap-4">
@@ -56,11 +65,50 @@ export default function TopBar({ projectName, mode, onModeChange, fileCount }: T
 
       <div className="flex items-center gap-3">
         <div className="flex items-center gap-1 mr-2">
+          {layoutControls ? (
+            <>
+              <button
+                onClick={layoutControls.onToggleExplorer}
+                className={`p-1.5 rounded transition-colors ${layoutControls.explorerVisible ? "text-zinc-200 bg-white/5" : "text-zinc-500 hover:text-zinc-300 hover:bg-white/5"}`}
+                title="Toggle Explorer"
+              >
+                <PanelLeft className="w-4 h-4" />
+              </button>
+
+              <button
+                onClick={layoutControls.onCyclePreviewDock}
+                className={`p-1.5 rounded transition-colors ${layoutControls.previewDock !== "hidden" ? "text-zinc-200 bg-white/5" : "text-zinc-500 hover:text-zinc-300 hover:bg-white/5"}`}
+                title="Cycle Preview Dock (Right/Bottom/Hidden)"
+              >
+                {layoutControls.previewDock === "bottom" ? (
+                  <PanelBottom className="w-4 h-4" />
+                ) : (
+                  <PanelRight className="w-4 h-4" />
+                )}
+              </button>
+
+              <button
+                onClick={layoutControls.onCycleAgentDock}
+                className={`p-1.5 rounded transition-colors ${layoutControls.agentDock !== "hidden" ? "text-zinc-200 bg-white/5" : "text-zinc-500 hover:text-zinc-300 hover:bg-white/5"}`}
+                title="Cycle Agent Dock (Right/Bottom/Hidden)"
+              >
+                <MessagesSquare className="w-4 h-4" />
+              </button>
+
+              <button
+                onClick={layoutControls.onToggleTerminal}
+                className={`p-1.5 rounded transition-colors ${layoutControls.terminalVisible ? "text-zinc-200 bg-white/5" : "text-zinc-500 hover:text-zinc-300 hover:bg-white/5"}`}
+                title="Toggle Terminal"
+              >
+                <Terminal className="w-4 h-4" />
+              </button>
+
+              <div className="w-px h-4 bg-white/10 mx-1" />
+            </>
+          ) : null}
+
           <button className="p-1.5 text-zinc-400 hover:text-zinc-200 hover:bg-white/5 rounded transition-colors" title="Layout">
             <Layout className="w-4 h-4" />
-          </button>
-          <button className="p-1.5 text-zinc-400 hover:text-zinc-200 hover:bg-white/5 rounded transition-colors" title="Terminal">
-            <Terminal className="w-4 h-4" />
           </button>
           <button className="p-1.5 text-zinc-400 hover:text-zinc-200 hover:bg-white/5 rounded transition-colors" title="Settings">
             <Settings className="w-4 h-4" />

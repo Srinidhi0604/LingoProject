@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { RefreshCw, Play, Loader2, ExternalLink, Monitor, Smartphone, Tablet } from "lucide-react";
 
 interface LivePreviewProps {
@@ -27,20 +27,57 @@ export default function LivePreview({
   const [isStarting, setIsStarting] = useState(false);
   const [iframeKey, setIframeKey] = useState(0);
   const [viewport, setViewport] = useState<"desktop" | "tablet" | "mobile">("desktop");
+  const hasAutoRestartedRef = useRef(false);
+
+  const restartDevServer = useCallback(async () => {
+    setIsStarting(true);
+    try {
+      const response = await fetch("/api/devserver", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          workspaceId,
+          action: "restart",
+        }),
+      });
+
+      const data = await response.json();
+      setServerStatus(data.status);
+
+      if (data.status?.running && data.status?.url) {
+        setPreviewUrl(data.status.url);
+      }
+    } catch (error) {
+      console.error("Failed to restart dev server:", error);
+    } finally {
+      setIsStarting(false);
+    }
+  }, [workspaceId]);
 
   const checkServerStatus = useCallback(async () => {
     try {
       const response = await fetch(`/api/devserver?workspaceId=${workspaceId}`);
       const data = await response.json();
       setServerStatus(data.status);
-      
+
       if (data.status?.running && data.status?.url) {
+        // If the dev server ever ends up on the IDE's origin (most commonly :3000),
+        // the iframe will show the IDE instead of the imported project.
+        if (!hasAutoRestartedRef.current && typeof window !== "undefined") {
+          const ideOrigin = window.location.origin;
+          if (data.status.url.startsWith(ideOrigin)) {
+            hasAutoRestartedRef.current = true;
+            await restartDevServer();
+            return;
+          }
+        }
+
         setPreviewUrl(data.status.url);
       }
     } catch (error) {
       console.error("Failed to check server status:", error);
     }
-  }, [workspaceId]);
+  }, [workspaceId, restartDevServer]);
 
   const startDevServer = useCallback(async () => {
     setIsStarting(true);
@@ -58,6 +95,15 @@ export default function LivePreview({
       setServerStatus(data.status);
       
       if (data.status?.running && data.status?.url) {
+        if (!hasAutoRestartedRef.current && typeof window !== "undefined") {
+          const ideOrigin = window.location.origin;
+          if (data.status.url.startsWith(ideOrigin)) {
+            hasAutoRestartedRef.current = true;
+            await restartDevServer();
+            return;
+          }
+        }
+
         setPreviewUrl(data.status.url);
       }
     } catch (error) {
@@ -65,7 +111,7 @@ export default function LivePreview({
     } finally {
       setIsStarting(false);
     }
-  }, [workspaceId]);
+  }, [workspaceId, restartDevServer]);
 
   const refreshPreview = useCallback(() => {
     setIframeKey(prev => prev + 1);

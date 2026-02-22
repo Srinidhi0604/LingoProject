@@ -6,6 +6,7 @@ import { Mic, Zap, FolderOpen, Plus, Upload, Code2, Sparkles, Keyboard, Lock, Cl
 interface WelcomeScreenProps {
   onCreateWorkspace: (name: string) => Promise<void>;
   onLoadWorkspace: (files: { path: string; content: string }[]) => Promise<void>;
+  onLoadWorkspaceFromZip: (file: File) => Promise<void>;
   onLoadWorkspaceFromDirectory: (sourcePath: string) => Promise<void>;
   recentWorkspaces: { id: string; name: string; type: string; lastModified: number }[];
   onSelectRecent: (id: string) => void;
@@ -14,6 +15,7 @@ interface WelcomeScreenProps {
 export default function WelcomeScreen({ 
   onCreateWorkspace, 
   onLoadWorkspace, 
+  onLoadWorkspaceFromZip,
   onLoadWorkspaceFromDirectory,
   recentWorkspaces, 
   onSelectRecent,
@@ -36,28 +38,12 @@ export default function WelcomeScreen({
     if (!file) return;
 
     setIsImporting(true);
-    
-    try {
-      const { default: JSZip } = await import("jszip");
-      const zip = await JSZip.loadAsync(file);
-      
-      const files: { path: string; content: string }[] = [];
-      
-      for (const [path, zipEntry] of Object.entries(zip.files)) {
-        if (!zipEntry.dir && !path.startsWith("__MACOSX") && !path.includes(".DS_Store")) {
-          const cleanPath = path.replace(/^[^/]+\//, "");
-          if (cleanPath && (cleanPath.endsWith(".tsx") || cleanPath.endsWith(".ts") || 
-              cleanPath.endsWith(".jsx") || cleanPath.endsWith(".js") || 
-              cleanPath.endsWith(".css") || cleanPath.endsWith(".json") ||
-              cleanPath.endsWith(".md") || cleanPath.endsWith(".mjs"))) {
-            const content = await zipEntry.async("string");
-            files.push({ path: cleanPath, content });
-          }
-        }
-      }
 
-      if (files.length > 0) {
-        await onLoadWorkspace(files);
+    try {
+      if (file.name.toLowerCase().endsWith(".zip")) {
+        await onLoadWorkspaceFromZip(file);
+      } else {
+        throw new Error("Only .zip imports are supported");
       }
     } catch (error) {
       console.error("Import error:", error);
@@ -264,9 +250,6 @@ export default function WelcomeScreen({
                 onClick={() => setShowApp(true)}
                 className="px-6 py-3 bg-white text-black hover:bg-zinc-200 text-sm font-semibold rounded-full transition-colors flex items-center gap-2"
               >
-                <div className="w-4 h-4 rounded-full bg-black flex items-center justify-center">
-                  <Mic className="w-2.5 h-2.5 text-white" />
-                </div>
                 Get Voxera - Free
               </button>
               <button className="px-6 py-3 bg-transparent text-white hover:bg-white/5 border border-white/10 text-sm font-semibold rounded-full transition-colors">
