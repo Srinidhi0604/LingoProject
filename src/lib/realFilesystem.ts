@@ -99,7 +99,12 @@ class RealFilesystemManager {
     try {
       await fs.unlink(fullPath);
       return true;
-    } catch {
+    } catch (e: unknown) {
+      // If the file is already gone, treat as successful delete for idempotency.
+      const err = e as { code?: string };
+      if (err?.code === "ENOENT") {
+        return true;
+      }
       return false;
     }
   }

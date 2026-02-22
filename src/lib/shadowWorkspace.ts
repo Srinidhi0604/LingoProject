@@ -40,12 +40,120 @@ function validateTypeScriptSyntax(content: string): ValidationResult {
     return { valid: false, errors: ["File is empty"], warnings: [] };
   }
 
-  const openBraces = (content.match(/{/g) || []).length;
-  const closeBraces = (content.match(/}/g) || []).length;
-  const openParens = (content.match(/\(/g) || []).length;
-  const closeParens = (content.match(/\)/g) || []).length;
-  const openBrackets = (content.match(/\[/g) || []).length;
-  const closeBrackets = (content.match(/\]/g) || []).length;
+  let openBraces = 0;
+  let closeBraces = 0;
+  let openParens = 0;
+  let closeParens = 0;
+  let openBrackets = 0;
+  let closeBrackets = 0;
+
+  // Lightweight syntax scan to avoid false positives from naive regex.
+  // Counts brackets only outside of strings/comments and detects unclosed strings.
+  let inSingleQuote = false;
+  let inDoubleQuote = false;
+  let inTemplateQuote = false;
+  let inLineComment = false;
+  let inBlockComment = false;
+  let escaped = false;
+
+  for (let i = 0; i < content.length; i++) {
+    const ch = content[i];
+    const next = i + 1 < content.length ? content[i + 1] : "";
+
+    if (inLineComment) {
+      if (ch === "\n") {
+        inLineComment = false;
+      }
+      continue;
+    }
+
+    if (inBlockComment) {
+      if (ch === "*" && next === "/") {
+        inBlockComment = false;
+        i++;
+      }
+      continue;
+    }
+
+    if (inSingleQuote) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (ch === "'") {
+        inSingleQuote = false;
+      }
+      continue;
+    }
+
+    if (inDoubleQuote) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (ch === "\"") {
+        inDoubleQuote = false;
+      }
+      continue;
+    }
+
+    if (inTemplateQuote) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (ch === "`") {
+        inTemplateQuote = false;
+      }
+      continue;
+    }
+
+    // Not in string/comment: detect comment starts.
+    if (ch === "/" && next === "/") {
+      inLineComment = true;
+      i++;
+      continue;
+    }
+    if (ch === "/" && next === "*") {
+      inBlockComment = true;
+      i++;
+      continue;
+    }
+
+    // Not in string/comment: detect string starts.
+    if (ch === "'") {
+      inSingleQuote = true;
+      continue;
+    }
+    if (ch === "\"") {
+      inDoubleQuote = true;
+      continue;
+    }
+    if (ch === "`") {
+      inTemplateQuote = true;
+      continue;
+    }
+
+    // Count brackets outside strings/comments.
+    if (ch === "{") openBraces++;
+    else if (ch === "}") closeBraces++;
+    else if (ch === "(") openParens++;
+    else if (ch === ")") closeParens++;
+    else if (ch === "[") openBrackets++;
+    else if (ch === "]") closeBrackets++;
+  }
 
   if (openBraces !== closeBraces) {
     errors.push(`Unbalanced braces: { ${openBraces} vs } ${closeBraces}`);
@@ -57,9 +165,12 @@ function validateTypeScriptSyntax(content: string): ValidationResult {
     errors.push(`Unbalanced brackets: [ ${openBrackets} vs ] ${closeBrackets}`);
   }
 
-  const unclosedStrings = content.match(/["'`](?![\s\S]*["'`])/);
-  if (unclosedStrings) {
+  if (inSingleQuote || inDoubleQuote || inTemplateQuote) {
     errors.push("Possible unclosed string literal");
+  }
+
+  if (inBlockComment) {
+    errors.push("Possible unclosed block comment");
   }
 
   if (content.includes("import ") && !content.includes("from")) {

@@ -82,10 +82,8 @@ export function executeVoiceOperation(
 
   shadowWorkspace.initializeFromFilesystem(fs);
 
-  const appRoot = detectAppRoot(fs.root as DirectoryNode);
-  const mainPagePath = `${appRoot}/page.tsx`;
-
   const orchestrator = createOrchestrator(fs.root as DirectoryNode);
+  const mainPagePath = orchestrator.ensureRoute("");
 
   switch (intent.type) {
     case "component.create": {
@@ -176,12 +174,23 @@ export function executeVoiceOperation(
 
       const finalComponentContent = orchestrator.getFileContent(componentPath);
       if (finalComponentContent) {
+        const dirPath = componentPath.split("/").slice(0, -1).join("/");
+        if (dirPath) {
+          insertDirectory(fs.root, dirPath);
+        }
         insertFile(fs.root, componentPath, finalComponentContent);
       }
       
       const finalPageContent = orchestrator.getFileContent(pagePath);
       if (finalPageContent) {
-        updateFileContent(fs.root, pagePath, finalPageContent);
+        const dirPath = pagePath.split("/").slice(0, -1).join("/");
+        if (dirPath) {
+          insertDirectory(fs.root, dirPath);
+        }
+        const updated = updateFileContent(fs.root, pagePath, finalPageContent);
+        if (!updated) {
+          insertFile(fs.root, pagePath, finalPageContent);
+        }
       }
 
       shadowWorkspace.commitShadowFile(componentPath);

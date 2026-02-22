@@ -113,15 +113,75 @@ export function normalizeIntent(
   transcript: string,
   detectedLanguage: string
 ): VoiceIntent {
+  const inferFromTranscript = (): VoiceIntent | null => {
+    const originalText = transcript || "";
+    const text = originalText.trim();
+    if (!text) return null;
+
+    const lower = text.toLowerCase();
+
+    const includesButton =
+      lower.includes("button") ||
+      text.includes("बटन") ||
+      text.includes("बटण") ||
+      text.includes("બટન") ||
+      text.includes("ಬಟನ್");
+
+    if (!includesButton) return null;
+
+    // Extract a name/label if user said “named/called …” (English) or “नाम … / जिसका नाम …” (Hindi)
+    // or “ಹೆಸರು …” (Kannada). Fall back to a generic label.
+    const namePatterns: RegExp[] = [
+      /\b(?:named|called)\b\s+(.+)$/i,
+      /(?:जिसका\s+नाम|नाम|नेम|नाम\s+का)\s+(.+)$/i,
+      /(?:ಹೆಸರು|ಎಂದು)\s+(.+)$/i,
+    ];
+
+    let label = "Button";
+    for (const pattern of namePatterns) {
+      const match = text.match(pattern);
+      if (match?.[1]) {
+        label = match[1].trim();
+        break;
+      }
+    }
+
+    label = label
+      .replace(/^[:\-\s"'“”‘’]+/, "")
+      .replace(/["'“”‘’\s]+$/, "")
+      .replace(/[.?!]+$/, "")
+      .replace(/\s+(?:है|हैं|हूँ|हो|था|थी|थे|hai)\s*$/i, "")
+      .trim();
+
+    if (!label) label = "Button";
+    if (label.length > 80) label = label.slice(0, 80).trim();
+
+    return {
+      type: "component.create",
+      component: {
+        type: "button",
+        props: {
+          ...DEFAULT_PROPS.button,
+          text: label,
+        },
+      },
+      metadata: {
+        confidence: 0.6,
+        originalText,
+        detectedLanguage,
+      },
+    };
+  };
+
   if (!rawIntent || typeof rawIntent !== "object") {
-    return { type: "none", metadata: { confidence: 0, originalText: transcript, detectedLanguage } };
+    return inferFromTranscript() || { type: "none", metadata: { confidence: 0, originalText: transcript, detectedLanguage } };
   }
   
   const raw = rawIntent as Record<string, unknown>;
   const type = normalizeIntentType(raw.type);
   
   if (type === "none") {
-    return { type: "none", metadata: { confidence: 0.5, originalText: transcript, detectedLanguage } };
+    return inferFromTranscript() || { type: "none", metadata: { confidence: 0.5, originalText: transcript, detectedLanguage } };
   }
   
   const intent: VoiceIntent = {

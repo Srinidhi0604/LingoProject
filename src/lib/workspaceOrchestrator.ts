@@ -20,6 +20,14 @@ function dirname(filePath: string): string {
   return parts.join("/");
 }
 
+function joinPath(...parts: string[]): string {
+  return parts
+    .filter((p) => typeof p === "string" && p.trim().length > 0)
+    .map((p) => p.replace(/^\/+/, "").replace(/\/+$/, ""))
+    .filter((p) => p.length > 0)
+    .join("/");
+}
+
 function toImportPath(fromFile: string, toFile: string): string {
   const fromDir = dirname(fromFile);
   const fromParts = fromDir.split("/").filter(Boolean);
@@ -73,6 +81,10 @@ export function detectAppRoot(root: DirectoryNode): string {
 
   const hasSrcApp = findNodeByPath(root, "src/app/page.tsx");
   if (hasSrcApp && isFile(hasSrcApp)) return "src/app";
+
+  // Some imported projects (or flattened virtual FS) may have App Router files at repo root.
+  const rootPage = findNodeByPath(root, "page.tsx");
+  if (rootPage && isFile(rootPage)) return "";
 
   // Fallback: if either directory exists, prefer it.
   const appDir = findNodeByPath(root, "app");
@@ -477,7 +489,9 @@ export class WorkspaceOrchestrator {
 
   ensureRoute(route: string): string {
     const routePath = route.startsWith("/") ? route.slice(1) : route;
-    const pagePath = routePath ? `${this.appRoot}/${routePath}/page.tsx` : `${this.appRoot}/page.tsx`;
+    const pagePath = routePath
+      ? joinPath(this.appRoot, routePath, "page.tsx")
+      : joinPath(this.appRoot, "page.tsx");
     
     const existing = findNodeByPath(this.root, pagePath);
     if (existing && isFile(existing)) {
@@ -499,9 +513,9 @@ export class WorkspaceOrchestrator {
 
   createComponent(template: ComponentTemplate): string {
     const componentName = sanitizeComponentName(template.name);
-    const componentPath = `${this.appRoot}/components/${componentName}.tsx`;
+    const componentPath = joinPath(this.appRoot, "components", `${componentName}.tsx`);
     
-    this.ensureDirectory(`${this.appRoot}/components`);
+    this.ensureDirectory(joinPath(this.appRoot, "components"));
 
     const needsLink = template.type === "link" || template.type === "nav";
     const imports = needsLink ? ['import Link from "next/link"'] : [];
@@ -522,8 +536,8 @@ export class WorkspaceOrchestrator {
     return componentPath;
   }
 
-  registerComponent(componentPath: string, targetPage: string = "app/page.tsx"): boolean {
-    const effectiveTargetPage = targetPage === "app/page.tsx" ? `${this.appRoot}/page.tsx` : targetPage;
+  registerComponent(componentPath: string, targetPage?: string): boolean {
+    const effectiveTargetPage = targetPage || joinPath(this.appRoot, "page.tsx");
     const componentNode = findNodeByPath(this.root, componentPath);
     if (!componentNode || !isFile(componentNode)) return false;
 
@@ -536,11 +550,13 @@ export class WorkspaceOrchestrator {
     const importPath = toImportPath(effectiveTargetPage, componentPath);
     const importStatement = `import ${componentName} from "${importPath}";`;
 
-    this.modifyFile(effectiveTargetPage, (content) => {
+    const modified = this.modifyFile(effectiveTargetPage, (content) => {
       let newContent = insertImport(content, importStatement);
       newContent = insertComponentIntoJsx(newContent, componentName);
       return newContent;
     });
+
+    if (!modified) return false;
 
     this.operations.push({
       type: "registerComponent",
@@ -557,11 +573,11 @@ export class WorkspaceOrchestrator {
     pagePath: string = "app/page.tsx",
     targetElement: string = "main"
   ): boolean {
-    const effectivePagePath = pagePath === "app/page.tsx" ? `${this.appRoot}/page.tsx` : pagePath;
+    const effectivePagePath = pagePath === "app/page.tsx" ? joinPath(this.appRoot, "page.tsx") : pagePath;
     const pageNode = findNodeByPath(this.root, effectivePagePath);
     if (!pageNode || !isFile(pageNode)) return false;
 
-    const componentPath = `${this.appRoot}/components/${componentName}.tsx`;
+    const componentPath = joinPath(this.appRoot, "components", `${componentName}.tsx`);
     const componentNode = findNodeByPath(this.root, componentPath);
     
     if (!componentNode || !isFile(componentNode)) {
