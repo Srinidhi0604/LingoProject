@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { VoiceIntent, ComponentType } from "@/types/intent";
+import { VoiceIntent } from "@/types/intent";
 import { normalizeIntent } from "@/lib/intentNormalizer";
 
-const SUPPORTED_LOCALES = ["en", "kn", "hi"] as const;
-type SupportedLocale = (typeof SUPPORTED_LOCALES)[number];
+type SupportedLocale = "en" | "kn" | "hi";
 
 function mapLanguageToLocale(language: string): SupportedLocale {
   const langLower = language.toLowerCase();

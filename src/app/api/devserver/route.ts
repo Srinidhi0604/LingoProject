@@ -32,7 +32,8 @@ export async function POST(request: NextRequest) {
       }
 
       case "stop": {
-        const stopped = await devServerManager.stopServer(workspaceId);
+        const path = workspacePath || await realFilesystem.getWorkspacePath(workspaceId);
+        const stopped = await devServerManager.stopServer(workspaceId, path);
         return NextResponse.json({
           success: stopped,
           message: stopped ? "Server stopped" : "Server not running",

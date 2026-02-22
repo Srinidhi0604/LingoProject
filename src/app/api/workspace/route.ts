@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { realFilesystem } from "@/lib/realFilesystem";
 import { devServerManager } from "@/lib/devServerController";
-import { DirectoryNode, FileNode, isFile, isDirectory, createDirectory, createFile } from "@/types/filesystem";
+import { DirectoryNode, FileNode, isFile, isDirectory } from "@/types/filesystem";
 import { isPathEditable, validateFile } from "@/lib/shadowWorkspace";
 
 export async function POST(request: NextRequest) {
