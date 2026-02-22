@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useState, useCallback, ReactNode } from "react";
+import { createContext, useContext, useState, useCallback, ReactNode, useEffect, useRef } from "react";
 import { ProjectFileSystem, DirectoryNode, FileNode, createFile, createDirectory, isFile, isDirectory } from "@/types/filesystem";
 import { Workspace, WorkspaceState, generateWorkspaceId } from "@/types/workspace";
 
@@ -8,6 +8,7 @@ interface WorkspaceContextType extends WorkspaceState {
   fileSystem: ProjectFileSystem;
   createWorkspace: (name: string, template?: string) => Promise<void>;
   loadWorkspace: (files: { path: string; content: string }[], name?: string) => Promise<void>;
+  loadWorkspaceFromZip: (file: File, name?: string) => Promise<void>;
   loadWorkspaceFromDirectory: (sourcePath: string, name?: string) => Promise<void>;
   updateFile: (path: string, content: string) => void;
   createFile: (path: string, content: string) => void;
@@ -303,6 +304,31 @@ function updateFileInFs(root: DirectoryNode, filePath: string, content: string):
   return true;
 }
 
+function collectFilePaths(node: FileNode | DirectoryNode): string[] {
+  if (isFile(node)) return [node.path];
+  if (isDirectory(node)) return node.children.flatMap(collectFilePaths);
+  return [];
+}
+
+function pickBestEntryFile(root: DirectoryNode): string | null {
+  const paths = new Set(collectFilePaths(root));
+  const candidates = [
+    "app/page.tsx",
+    "src/app/page.tsx",
+    "pages/index.tsx",
+    "pages/index.jsx",
+    "page.tsx",
+    "index.tsx",
+  ];
+
+  for (const c of candidates) {
+    if (paths.has(c)) return c;
+  }
+
+  const anyPage = Array.from(paths).find((p) => p.endsWith("page.tsx")) || null;
+  return anyPage;
+}
+
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [workspaceState, setWorkspaceState] = useState<WorkspaceState>({
     activeWorkspace: null,
@@ -313,6 +339,17 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
   const [fileSystem, setFileSystem] = useState<ProjectFileSystem>(() => createBlankProject("My Project"));
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>("app/page.tsx");
+
+  const activeWorkspaceIdRef = useRef<string | null>(null);
+  const fileSystemRef = useRef<ProjectFileSystem>(fileSystem);
+
+  useEffect(() => {
+    activeWorkspaceIdRef.current = workspaceState.activeWorkspace?.id ?? null;
+  }, [workspaceState.activeWorkspace?.id]);
+
+  useEffect(() => {
+    fileSystemRef.current = fileSystem;
+  }, [fileSystem]);
 
   const syncToRealFilesystem = useCallback(async (workspaceId: string, virtualRoot: DirectoryNode) => {
     const response = await fetch("/api/workspace", {
@@ -453,9 +490,58 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         recentWorkspaces: [workspace, ...prev.recentWorkspaces.filter(w => w.id !== workspace.id)].slice(0, 10),
       }));
 
-      setSelectedFilePath("app/page.tsx");
+      setSelectedFilePath(pickBestEntryFile(data.root as DirectoryNode));
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Failed to load directory";
+      setWorkspaceState(prev => ({ ...prev, isLoading: false, error: msg }));
+    }
+  }, []);
+
+  const loadWorkspaceFromZip = useCallback(async (file: File, name?: string) => {
+    const workspace: Workspace = {
+      id: generateWorkspaceId(),
+      name: name || file.name.replace(/\.zip$/i, "") || "Imported Project",
+      path: "",
+      type: "imported",
+      createdAt: Date.now(),
+      lastModified: Date.now(),
+    };
+
+    setWorkspaceState(prev => ({ ...prev, isLoading: true, error: null }));
+
+    try {
+      const form = new FormData();
+      form.append("file", file, file.name);
+      form.append("workspaceId", workspace.id);
+
+      const response = await fetch("/api/workspace/import-zip", {
+        method: "POST",
+        body: form,
+      });
+
+      const data = await response.json();
+      if (!data?.success || !data?.root) {
+        throw new Error(data?.message || "Failed to import zip");
+      }
+
+      workspace.path = data?.workspacePath || "";
+
+      setFileSystem({
+        root: data.root as DirectoryNode,
+        version: 1,
+        projectName: workspace.name,
+      });
+
+      setWorkspaceState(prev => ({
+        ...prev,
+        isLoading: false,
+        activeWorkspace: workspace,
+        recentWorkspaces: [workspace, ...prev.recentWorkspaces.filter(w => w.id !== workspace.id)].slice(0, 10),
+      }));
+
+      setSelectedFilePath(pickBestEntryFile(data.root as DirectoryNode));
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Failed to import zip";
       setWorkspaceState(prev => ({ ...prev, isLoading: false, error: msg }));
     }
   }, []);
@@ -466,6 +552,56 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       updateFileInFs(newRoot, path, content);
       return { ...prev, root: newRoot, version: prev.version + 1 };
     });
+  }, []);
+
+  const selectFile = useCallback((path: string | null) => {
+    if (!path) {
+      setSelectedFilePath(null);
+      return;
+    }
+
+    setSelectedFilePath(path);
+
+    const workspaceId = activeWorkspaceIdRef.current;
+    if (!workspaceId) return;
+
+    const currentRoot = fileSystemRef.current.root;
+    const node = findNodeByPath(currentRoot, path);
+    if (!node || !isFile(node)) return;
+
+    const contentOmitted = node.metadata?.["contentOmitted"] === true;
+    if (!contentOmitted) return;
+
+    void (async () => {
+      try {
+        const response = await fetch("/api/workspace", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "readFile",
+            workspaceId,
+            path,
+          }),
+        });
+
+        const data = await response.json();
+        if (!data?.success || typeof data?.content !== "string") return;
+
+        setFileSystem(prev => {
+          const newRoot = cloneFileSystemNode(prev.root) as DirectoryNode;
+          updateFileInFs(newRoot, path, data.content);
+
+          const updated = findNodeByPath(newRoot, path);
+          if (updated && isFile(updated) && updated.metadata) {
+            updated.metadata = { ...updated.metadata, contentOmitted: false };
+          }
+
+          return { ...prev, root: newRoot, version: prev.version + 1 };
+        });
+      } catch {
+        // ignore
+      }
+    })();
   }, []);
 
   const createFileInWorkspace = useCallback((path: string, content: string) => {
@@ -534,14 +670,15 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         fileSystem,
         createWorkspace,
         loadWorkspace,
+        loadWorkspaceFromZip,
+        loadWorkspaceFromDirectory,
         updateFile,
         createFile: createFileInWorkspace,
-            loadWorkspaceFromDirectory,
         deleteFile,
         createDirectory: createDirectoryInWorkspace,
         getSelectedFile,
         selectedFilePath,
-        selectFile: setSelectedFilePath,
+        selectFile,
         clearWorkspace,
       }}
     >
