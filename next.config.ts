@@ -7,7 +7,7 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default async function (): Promise<NextConfig> {
+export default async function createNextConfig(): Promise<NextConfig> {
   return await withLingo(nextConfig, {
     sourceRoot: "./src/app",
     sourceLocale: "en",
@@ -19,3 +19,4 @@ export default async function (): Promise<NextConfig> {
     widget: false,
   });
 }
+
