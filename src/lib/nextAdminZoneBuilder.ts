@@ -51,9 +51,9 @@ const FILES: Record<string, string> = {
 
   "src/voxera/builder/builder.css": `.voxera-zone {\n  outline: 1px solid rgba(99, 102, 241, 0.25);\n  background: rgba(255, 255, 255, 0.001);\n}\n\n.voxera-zone-selected {\n  outline: 2px solid rgba(99, 102, 241, 0.9);\n  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);\n}\n\n.voxera-zone-handle {\n  cursor: grab;\n}\n\n.voxera-zone-handle:active {\n  cursor: grabbing;\n}\n\n.voxera-canvas {\n  background-image: radial-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 0);\n  background-size: 18px 18px;\n  background-position: -1px -1px;\n}\n`,
 
-  "src/voxera/builder/VisualCanvas.tsx": `\"use client\";\n\nexport function VisualCanvas({ children }: { children: React.ReactNode }) {\n  return (\n    <div\n      className=\"voxera-canvas\"\n      style={{\n        position: \"relative\",\n        width: \"100%\",\n        height: \"100vh\",\n        overflow: \"hidden\",\n        background: \"transparent\",\n      }}\n    >\n      {children}\n    </div>\n  );\n}\n`,
+  "src/voxera/builder/VisualCanvas.tsx": `\"use client\";\n\nexport function VisualCanvas({ children, height }: { children: React.ReactNode; height?: number }) {\n  const contentHeight = Math.max(2400, height ?? 0);\n\n  return (\n    <div\n      className=\"voxera-canvas\"\n      style={{\n        width: \"100%\",\n        height: \"100vh\",\n        overflowY: \"auto\",\n        overflowX: \"hidden\",\n        background: \"transparent\",\n      }}\n    >\n      <div style={{ position: \"relative\", width: \"100%\", height: contentHeight + \"px\" }}>{children}</div>\n    </div>\n  );\n}\n`,
 
-  "src/voxera/builder/ZoneNode.tsx": `\"use client\";\n\nimport { Rnd } from \"react-rnd\";\nimport { rafThrottle } from \"./throttle\";\nimport type { ZoneLayout, ZoneSchemaNode } from \"./types\";\n\ntype Props = {\n  node: ZoneSchemaNode;\n  selected: boolean;\n  onSelect: (id: ZoneSchemaNode[\"id\"]) => void;\n  onLayoutChange: (id: ZoneSchemaNode[\"id\"], layout: ZoneLayout) => void;\n  children: React.ReactNode;\n};\n\nexport function ZoneNode({ node, selected, onSelect, onLayoutChange, children }: Props) {\n  const { layout } = node;\n\n  const pushLayout = rafThrottle((next: ZoneLayout) => {\n    onLayoutChange(node.id, next);\n  });\n\n  return (\n    <Rnd\n      bounds=\"parent\"\n      position={{ x: layout.x, y: layout.y }}\n      size={{ width: layout.width, height: layout.height }}\n      onMouseDown={() => onSelect(node.id)}\n      enableResizing\n      dragHandleClassName=\"voxera-zone-handle\"\n      onDrag={(e, d) => {\n        e.preventDefault();\n        pushLayout({ ...layout, x: d.x, y: d.y });\n      }}\n      onDragStop={(e, d) => {\n        e.preventDefault();\n        onLayoutChange(node.id, { ...layout, x: d.x, y: d.y });\n      }}\n      onResize={(e, direction, ref, delta, position) => {\n        e.preventDefault();\n        pushLayout({\n          x: position.x,\n          y: position.y,\n          width: ref.offsetWidth,\n          height: ref.offsetHeight,\n        });\n      }}\n      onResizeStop={(e, direction, ref, delta, position) => {\n        e.preventDefault();\n        onLayoutChange(node.id, {\n          x: position.x,\n          y: position.y,\n          width: ref.offsetWidth,\n          height: ref.offsetHeight,\n        });\n      }}\n      style={{\n        zIndex: selected ? 50 : 1,\n        borderRadius: 10,\n        overflow: \"hidden\",\n      }}\n      className={selected ? \"voxera-zone-selected\" : \"voxera-zone\"}\n    >\n      <div className=\"relative h-full w-full\">\n        <div className=\"voxera-zone-handle absolute left-2 top-2 z-10 select-none rounded-md bg-black/70 px-2 py-1 text-xs font-medium text-white\">\n          {node.title}\n        </div>\n        <div className=\"h-full w-full\">{children}</div>\n      </div>\n    </Rnd>\n  );\n}\n`,
+  "src/voxera/builder/ZoneNode.tsx": `\"use client\";\n\nimport { Rnd } from \"react-rnd\";\nimport { rafThrottle } from \"./throttle\";\nimport type { ZoneLayout, ZoneSchemaNode } from \"./types\";\n\ntype Props = {\n  node: ZoneSchemaNode;\n  selected: boolean;\n  onSelect: (id: ZoneSchemaNode[\"id\"]) => void;\n  onLayoutChange: (id: ZoneSchemaNode[\"id\"], layout: ZoneLayout) => void;\n  children: React.ReactNode;\n};\n\nexport function ZoneNode({ node, selected, onSelect, onLayoutChange, children }: Props) {\n  const { layout } = node;\n\n  const pushLayout = rafThrottle((next: ZoneLayout) => {\n    onLayoutChange(node.id, next);\n  });\n\n  return (\n    <Rnd\n      bounds=\"parent\"\n      position={{ x: layout.x, y: layout.y }}\n      size={{ width: layout.width, height: layout.height }}\n      data-voxera-zone-id={node.id}\n      data-voxera-zone-title={node.title}\n      onMouseDown={() => onSelect(node.id)}\n      enableResizing\n      dragHandleClassName=\"voxera-zone-handle\"\n      onDrag={(e, d) => {\n        e.preventDefault();\n        pushLayout({ ...layout, x: d.x, y: d.y });\n      }}\n      onDragStop={(e, d) => {\n        e.preventDefault();\n        onLayoutChange(node.id, { ...layout, x: d.x, y: d.y });\n      }}\n      onResize={(e, direction, ref, delta, position) => {\n        e.preventDefault();\n        pushLayout({\n          x: position.x,\n          y: position.y,\n          width: ref.offsetWidth,\n          height: ref.offsetHeight,\n        });\n      }}\n      onResizeStop={(e, direction, ref, delta, position) => {\n        e.preventDefault();\n        onLayoutChange(node.id, {\n          x: position.x,\n          y: position.y,\n          width: ref.offsetWidth,\n          height: ref.offsetHeight,\n        });\n      }}\n      style={{\n        zIndex: selected ? 50 : 1,\n        borderRadius: 10,\n        overflow: \"hidden\",\n      }}\n      className={selected ? \"voxera-zone-selected\" : \"voxera-zone\"}\n    >\n      <div className=\"relative h-full w-full\">\n        <div className=\"voxera-zone-handle absolute left-2 top-2 z-10 select-none rounded-md bg-black/70 px-2 py-1 text-xs font-medium text-white\">\n          {node.title}\n        </div>\n        <div className=\"h-full w-full\">{children}</div>\n      </div>\n    </Rnd>\n  );\n}\n`,
 };
 
 // NOTE: defaults.ts, SchemaRenderer.tsx, layout/page patches are applied below using
@@ -69,9 +69,12 @@ export async function applyNextAdminZoneBuilder(workspacePath: string): Promise<
     const workspacesRoot = path.join(process.cwd(), "workspaces");
     if (existsSync(workspacesRoot)) {
       const candidates = await fs.readdir(workspacesRoot, { withFileTypes: true });
-      const reference = candidates
-        .filter((e) => e.isDirectory())
-        .map((e) => path.join(workspacesRoot, e.name))
+      const dirs = candidates.filter((e) => e.isDirectory()).map((e) => e.name);
+      const preferred = dirs.find((name) => name === "ws_import_from_3006");
+      const searchOrder = preferred ? [preferred, ...dirs.filter((d) => d !== preferred)] : dirs;
+
+      const reference = searchOrder
+        .map((name) => path.join(workspacesRoot, name))
         .find((p) => existsSync(path.join(p, "src", "voxera", "builder", "VoxeraLayoutShell.tsx")));
 
       if (reference) {
@@ -87,6 +90,9 @@ export async function applyNextAdminZoneBuilder(workspacePath: string): Promise<
           ["src/app/forms/form-elements/page.tsx"],
           ["src/app/forms/form-layout/page.tsx"],
           ["src/app/charts/basic-chart/page.tsx"],
+          ["src/components/VoxeraDemoBridge.tsx"],
+          ["src/components/GlobalLingoButton.tsx"],
+          ["src/app/lingo-dev/page.tsx"],
         ];
 
         for (const [rel] of overwriteFiles) {
@@ -97,16 +103,19 @@ export async function applyNextAdminZoneBuilder(workspacePath: string): Promise<
           }
         }
 
-        // Ensure react-rnd dependency.
+        // Ensure demo/build dependencies.
         const pkgPath = path.join(workspacePath, "package.json");
         try {
           const raw = await readText(pkgPath);
           const pkg = JSON.parse(raw) as any;
           pkg.dependencies = pkg.dependencies || {};
+          if (!pkg.dependencies["@lingo.dev/compiler"]) {
+            pkg.dependencies["@lingo.dev/compiler"] = "^0.3.8";
+          }
           if (!pkg.dependencies["react-rnd"]) {
             pkg.dependencies["react-rnd"] = "^10.5.2";
-            await writeText(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
           }
+          await writeText(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
         } catch {
           // ignore
         }
@@ -130,10 +139,13 @@ export async function applyNextAdminZoneBuilder(workspacePath: string): Promise<
     const raw = await readText(pkgPath);
     const pkg = JSON.parse(raw) as any;
     pkg.dependencies = pkg.dependencies || {};
+    if (!pkg.dependencies["@lingo.dev/compiler"]) {
+      pkg.dependencies["@lingo.dev/compiler"] = "^0.3.8";
+    }
     if (!pkg.dependencies["react-rnd"]) {
       pkg.dependencies["react-rnd"] = "^10.5.2";
-      await writeText(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
     }
+    await writeText(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
   } catch {
     // ignore
   }

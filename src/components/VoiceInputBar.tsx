@@ -10,12 +10,21 @@ interface VoiceInputBarProps {
   currentLocale: string;
   onLocaleChange: (locale: string) => void;
   statusMessage?: string;
+  confirmPrompt?: {
+    title: string;
+    message: string;
+    confirmLabel?: string;
+    cancelLabel?: string;
+    onConfirm: () => void;
+    onCancel: () => void;
+  } | null;
 }
 
 const LOCALES = [
   { code: "en", name: "English", flag: "🇺🇸" },
   { code: "kn", name: "ಕನ್ನಡ", flag: "🇮🇳" },
   { code: "hi", name: "हिन्दी", flag: "🇮🇳" },
+  { code: "es", name: "Español", flag: "🇪🇸" },
 ];
 
 export default function VoiceInputBar({
@@ -25,11 +34,38 @@ export default function VoiceInputBar({
   currentLocale,
   onLocaleChange,
   statusMessage,
+  confirmPrompt,
 }: VoiceInputBarProps) {
   const [showLocales, setShowLocales] = useState(false);
 
   return (
     <div className="bg-[#0A0A0A] border-t border-white/10 px-4 py-3 relative z-50">
+      {confirmPrompt && !isRecording && (
+        <div className="max-w-4xl mx-auto mb-3 rounded-xl border border-white/10 bg-[#111] p-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-sm font-semibold text-white truncate">{confirmPrompt.title}</div>
+              <div className="mt-1 text-xs text-zinc-400">{confirmPrompt.message}</div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={confirmPrompt.onCancel}
+                className="px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-xs font-medium text-zinc-300 hover:bg-white/10 hover:text-white transition-all"
+              >
+                {confirmPrompt.cancelLabel || "No"}
+              </button>
+              <button
+                type="button"
+                onClick={confirmPrompt.onConfirm}
+                className="px-3 py-2 bg-indigo-600 rounded-lg text-xs font-medium text-white hover:bg-indigo-500 transition-all"
+              >
+                {confirmPrompt.confirmLabel || "Yes"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="flex items-center gap-3 max-w-4xl mx-auto">
         <div className="relative">
           <button

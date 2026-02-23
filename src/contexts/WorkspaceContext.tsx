@@ -524,6 +524,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         throw new Error(data?.message || "Failed to import zip");
       }
 
+      if (typeof data?.workspaceId === "string" && data.workspaceId.trim()) {
+        workspace.id = data.workspaceId.trim();
+      }
+
       workspace.path = data?.workspacePath || "";
 
       setFileSystem({

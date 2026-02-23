@@ -4,6 +4,8 @@ import fs from "fs/promises";
 import { existsSync } from "fs";
 import { realFilesystem } from "@/lib/realFilesystem";
 import { applyNextAdminZoneBuilder } from "@/lib/nextAdminZoneBuilder";
+import { applyImportedOverlay } from "@/lib/importOverlay";
+import { ensureNextAppFromStaticZip } from "@/lib/staticZipNextApp";
 import {
   DirectoryNode,
   FileNode,
@@ -36,6 +38,19 @@ const TEXT_EXTENSIONS = new Set([
 
 const MAX_INLINE_BYTES_PER_FILE = 250 * 1024;
 const MAX_INLINE_BYTES_TOTAL = 2 * 1024 * 1024;
+
+const SINGLE_WORKSPACE_CONFIG = path.join(process.cwd(), "workspaces", ".voxera-single-workspace.json");
+
+async function readSingleWorkspaceId(): Promise<string | null> {
+  try {
+    if (!existsSync(SINGLE_WORKSPACE_CONFIG)) return null;
+    const raw = await fs.readFile(SINGLE_WORKSPACE_CONFIG, "utf-8");
+    const parsed = JSON.parse(raw) as { workspaceId?: unknown };
+    return typeof parsed.workspaceId === "string" && parsed.workspaceId.trim() ? parsed.workspaceId.trim() : null;
+  } catch {
+    return null;
+  }
+}
 
 function shouldAlwaysOmitInlineContent(fileName: string): boolean {
   const base = path.basename(fileName).toLowerCase();
@@ -177,7 +192,10 @@ export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
     const file = formData.get("file") as File | null;
-    const workspaceId = formData.get("workspaceId") as string | null;
+    const requestedWorkspaceId = formData.get("workspaceId") as string | null;
+
+    const singleWorkspaceId = await readSingleWorkspaceId();
+    const workspaceId = singleWorkspaceId || requestedWorkspaceId;
 
     if (!file || !workspaceId) {
       return NextResponse.json(
@@ -229,11 +247,19 @@ export async function POST(request: NextRequest) {
     // inject the minimal zone-builder runtime into the imported workspace.
     await applyNextAdminZoneBuilder(workspacePath);
 
+    // If the zip is a static landing (no package.json, e.g. code.html), scaffold a minimal Next app.
+    await ensureNextAppFromStaticZip(workspacePath);
+
+    // Universal hackathon overlay: add minimal voice-driven demo bridge + /lingo-dev page
+    // for any App Router project (safe, additive).
+    await applyImportedOverlay(workspacePath);
+
     const root = await buildVirtualTreeFromDisk(workspacePath);
 
     return NextResponse.json({
       success: true,
       root,
+      workspaceId,
       workspacePath,
       message: `Imported zip to workspace ${workspaceId}`,
     });

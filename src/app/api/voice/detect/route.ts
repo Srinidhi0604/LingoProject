@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { VoiceIntent } from "@/types/intent";
 import { normalizeIntent } from "@/lib/intentNormalizer";
 
-type SupportedLocale = "en" | "kn" | "hi";
+type SupportedLocale = "en" | "kn" | "hi" | "es";
 
 function mapLanguageToLocale(language: string): SupportedLocale {
   const langLower = language.toLowerCase();
@@ -41,6 +41,11 @@ INTENT TYPES:
 - file.update: Update file content
 - ui.setColor: Change color
 - ui.setTheme: Toggle dark/light mode
+- ui.showLingoButton: Show global Lingo Dev floating button
+- ui.showAiInsights: Show AI Insights panel on dashboard
+- ui.switchMinimalMode: Switch preview to minimal mode
+- ui.hindiLingoDev: Switch page to Hindi and show Lingo Dev button
+- ui.activatePreset: Activate a prebuilt layout preset (e.g. minimal_investor)
 - none: Not a UI command
 
 COMPONENT TYPES: button, div, text, input, heading, link, image, container, card, form, paragraph, textarea, checkbox, select, list, listItem
@@ -102,6 +107,25 @@ THEME:
 
 NOT A COMMAND:
 "hello" → {"type":"none"}
+
+LINGO DEV BUTTON:
+"Ek naya button banao jiska naam Lingo Dev hai" → {"type":"ui.showLingoButton"}
+"create a lingo dev button" → {"type":"ui.showLingoButton"}
+"lingo dev button banao" → {"type":"ui.showLingoButton"}
+
+MINIMAL MODE:
+"Switch to minimal mode." → {"type":"ui.switchMinimalMode"}
+
+HINDI + LINGO DEV:
+"Is page ko Hindi mein kar do aur ek button banao jiska naam Lingo Dev hai" → {"type":"ui.hindiLingoDev"}
+
+AI INSIGHTS PANEL:
+"AI insights daalo" → {"type":"ui.showAiInsights"}
+"Dashboard ke upar AI insights panel add karo" → {"type":"ui.showAiInsights"}
+"show ai insights" → {"type":"ui.showAiInsights"}
+
+MINIMAL INVESTOR PRESET:
+"Convert this dashboard into a minimal investor analytics view." → {"type":"ui.activatePreset","value":"minimal_investor"}
 
 IMPORTANT: Extract text/names from speech. "button named X" or "button called X" → text: "X"`;
 

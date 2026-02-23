@@ -1,7 +1,7 @@
 import { spawn, ChildProcess } from "child_process";
 import path from "path";
 import fs from "fs/promises";
-import { existsSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import net from "net";
 
 export interface DevServerConfig {
@@ -230,6 +230,33 @@ class DevServerManager {
     });
   }
 
+  private async isPortListening(port: number): Promise<boolean> {
+    return await new Promise<boolean>((resolve) => {
+      const socket = net.connect({ port, host: "127.0.0.1" });
+      const done = (ok: boolean) => {
+        try {
+          socket.destroy();
+        } catch {
+          // ignore
+        }
+        resolve(ok);
+      };
+
+      socket.once("connect", () => done(true));
+      socket.once("error", () => done(false));
+      setTimeout(() => done(false), 250);
+    });
+  }
+
+  private async waitForPortListening(port: number, timeoutMs: number): Promise<boolean> {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      if (await this.isPortListening(port)) return true;
+      await this.sleep(250);
+    }
+    return false;
+  }
+
   private async ensureDependenciesInstalled(
     workspacePath: string,
     env: NodeJS.ProcessEnv,
@@ -242,26 +269,52 @@ class DevServerManager {
 
     addLog("[SYS] node_modules not found; running npm install...");
 
-    await new Promise<void>((resolve, reject) => {
-      const installProcess: ChildProcess = spawn(
-        "npm",
-        ["install", "--no-audit", "--no-fund", "--prefer-offline"],
-        {
-        cwd: workspacePath,
-        env,
-        shell: true,
-        stdio: "pipe" as const,
-        }
-      );
+    const runInstall = async (args: string[], label: string): Promise<void> => {
+      addLog(`[SYS] Running npm ${label}...`);
+      await new Promise<void>((resolve, reject) => {
+        const installProcess: ChildProcess = spawn(
+          "npm",
+          args,
+          {
+            cwd: workspacePath,
+            env,
+            shell: true,
+            stdio: "pipe" as const,
+          }
+        );
 
-      installProcess.stdout?.on("data", (data) => addLog(`[OUT] ${data.toString()}`));
-      installProcess.stderr?.on("data", (data) => addLog(`[ERR] ${data.toString()}`));
-      installProcess.on("error", (err) => reject(err));
-      installProcess.on("exit", (code) => {
-        if (code === 0) resolve();
-        else reject(new Error(`npm install failed with code ${code}`));
+        let stderr = "";
+        installProcess.stdout?.on("data", (data) => addLog(`[OUT] ${data.toString()}`));
+        installProcess.stderr?.on("data", (data) => {
+          const s = data.toString();
+          stderr += s;
+          addLog(`[ERR] ${s}`);
+        });
+        installProcess.on("error", (err) => reject(err));
+        installProcess.on("exit", (code) => {
+          if (code === 0) {
+            resolve();
+            return;
+          }
+          const err = new Error(`npm install failed with code ${code}`);
+          (err as any).stderr = stderr;
+          reject(err);
+        });
       });
-    });
+    };
+
+    try {
+      await runInstall(["install", "--no-audit", "--no-fund", "--prefer-offline"], "install");
+    } catch (e) {
+      const stderr = typeof (e as any)?.stderr === "string" ? (e as any).stderr : "";
+      const looksLikeResolveIssue = /ERESOLVE|unable to resolve dependency tree/i.test(stderr);
+      if (!looksLikeResolveIssue) throw e;
+      addLog("[SYS] npm install hit a dependency resolution issue; retrying with --legacy-peer-deps...");
+      await runInstall(
+        ["install", "--no-audit", "--no-fund", "--prefer-offline", "--legacy-peer-deps"],
+        "install (legacy peer deps)"
+      );
+    }
 
     addLog("[SYS] npm install completed");
   }
@@ -351,6 +404,25 @@ class DevServerManager {
       } catch (e) {
         addLog(`[WARN] Failed to create page: ${e instanceof Error ? e.message : String(e)}`);
       }
+    }
+
+    // If the root page exists but contains stray top-level JSX (common in demo zips), sanitize it.
+    // Example broken pattern:
+    //   export { default } from "./(home)/page";
+    //   <Button />
+    // which causes "Parsing ecmascript source code failed".
+    try {
+      const raw = await fs.readFile(pagePath, "utf-8");
+      const hasReExport = /export\s+\{\s*default\s*\}\s+from\s+["'][^"']+["']\s*;?/.test(raw);
+      const hasTopLevelJsx = /^\s*<\w/m.test(raw);
+      if (hasReExport && hasTopLevelJsx) {
+        const exportLineMatch = raw.match(/export\s+\{\s*default\s*\}\s+from\s+["'][^"']+["']\s*;?/);
+        const exportLine = exportLineMatch ? exportLineMatch[0] : 'export { default } from "./(home)/page";';
+        await fs.writeFile(pagePath, exportLine + "\n", "utf-8");
+        addLog(`[SYS] Sanitized invalid root page JSX at ${pagePath}`);
+      }
+    } catch {
+      // ignore
     }
   }
 
@@ -455,6 +527,30 @@ class DevServerManager {
         NEXT_DISABLE_TURBOPACK: "1",
       };
 
+      // Next.js <= 11 uses webpack 4, which crashes on Node.js >= 17 unless the
+      // legacy OpenSSL provider is enabled.
+      try {
+        const rawNodeMajor = Number.parseInt(process.versions.node.split(".")[0] ?? "0", 10);
+        if (rawNodeMajor >= 17) {
+          const pkgRaw = readFileSync(packageJsonPath, "utf-8");
+          const pkg = JSON.parse(pkgRaw) as {
+            dependencies?: Record<string, string>;
+            devDependencies?: Record<string, string>;
+          };
+          const nextRange = pkg.dependencies?.next ?? pkg.devDependencies?.next;
+          const majorStr = (nextRange ?? "").replace(/^[^0-9]*/, "").split(".")[0];
+          const nextMajor = Number.parseInt(majorStr || "0", 10);
+          if (nextMajor > 0 && nextMajor <= 11) {
+            const current = env.NODE_OPTIONS ?? "";
+            if (!current.includes("--openssl-legacy-provider")) {
+              env.NODE_OPTIONS = `${current} --openssl-legacy-provider`.trim();
+            }
+          }
+        }
+      } catch {
+        // If anything goes wrong, skip this compatibility tweak.
+      }
+
       let resolved = false;
       const startupLogs: string[] = [];
       let startupError: string | null = null;
@@ -507,13 +603,68 @@ class DevServerManager {
           }
         }
 
-        // Explicitly pass port to next dev via npm's argv forwarding.
-        const devProcess: ChildProcess = spawn("npm", ["run", "dev", "--", "-p", String(port)], {
-          cwd: workspacePath,
-          env,
-          shell: true,
-          stdio: "pipe" as const,
-        });
+        // Start Next dev server with an explicit port.
+        // Note: `npm run dev -- -p <port>` is unreliable on some Windows shells and can drop flags,
+        // causing Next to interpret `<port>` as a project directory.
+        // Also: on Windows, spawning a .cmd directly with shell:false can throw EINVAL.
+        let devProcess: ChildProcess;
+        try {
+          if (process.platform === "win32") {
+            devProcess = spawn("cmd.exe", ["/c", "npx", "next", "dev", "--port", String(port)], {
+              cwd: workspacePath,
+              env,
+              shell: false,
+              stdio: "pipe" as const,
+            });
+          } else {
+            devProcess = spawn("npx", ["next", "dev", "--port", String(port)], {
+              cwd: workspacePath,
+              env,
+              shell: false,
+              stdio: "pipe" as const,
+            });
+          }
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : "Failed to spawn dev server";
+          addLog(`[ERROR] ${msg}`);
+          if (!resolved) {
+            resolved = true;
+            resolve({
+              running: false,
+              port: null,
+              url: null,
+              pid: null,
+              error: msg,
+              logs: startupLogs,
+            });
+          }
+          return;
+        }
+
+        // Fallback readiness detection: if the port is listening, consider the server started
+        // even if Next.js log output format changes.
+        void (async () => {
+          const ok = await this.waitForPortListening(port, 60000);
+          if (!ok) return;
+          if (resolved) return;
+
+          resolved = true;
+          this.processes.set(workspaceId, { process: devProcess, port });
+          if (devProcess.pid) {
+            void this.writePidFile(workspacePath, devProcess.pid, port);
+          }
+
+          const status: DevServerStatus = {
+            running: true,
+            port,
+            url: `http://localhost:${port}`,
+            pid: devProcess.pid ?? null,
+            error: null,
+            logs: startupLogs,
+          };
+          this.statusMap.set(workspaceId, status);
+          resolve(status);
+        })();
 
         devProcess.stdout?.on("data", (data) => {
           const log = data.toString();
@@ -650,7 +801,7 @@ class DevServerManager {
               // ignore
             }
           }
-        }, 20000);
+        }, 60000);
       })();
     });
   }
@@ -729,7 +880,7 @@ class DevServerManager {
       port: null,
       url: null,
       pid: null,
-      error: "Server not started",
+      error: null,
       logs: [],
     };
   }

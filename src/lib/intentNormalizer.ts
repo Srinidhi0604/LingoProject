@@ -127,6 +127,195 @@ export function normalizeIntent(
       text.includes("બટન") ||
       text.includes("ಬಟನ್");
 
+    const includesLingoDev =
+      // Allow "lingo" without requiring the word "dev" (users often say "lingo button").
+      lower.includes("lingo") ||
+      // Hindi spellings
+      text.includes("लिंगो") ||
+      text.includes("लिंगो देव") ||
+      text.includes("लिंगोदेव") ||
+      // Some detectors strip matras/diacritics: "लिंगो देव" -> "लग दव"
+      /(?:लिंगो|लिगो|लिंग|लिग|लग)\s*(?:dev|डेव|दव)?/i.test(text);
+
+    const includesHindiSwitch =
+      lower.includes("hindi") ||
+      text.includes("हिंदी") ||
+      text.includes("हिन्दी") ||
+      text.includes("हिंदी में") ||
+      // Stripped form sometimes becomes "हद म"
+      text.includes("हद म") ||
+      // If detector already says Hindi, treat as Hindi intent even if transcript got mangled.
+      String(detectedLanguage || "").toLowerCase().startsWith("hi");
+
+    const asksLingoDevButton =
+      includesLingoDev && (includesButton || lower.includes("ek button") || text.includes("एक बटन") || lower.includes("add") || text.includes("ऐड"));
+
+    // If the user is asking to switch to Hindi AND wants the Lingo Dev button,
+    // prioritize this over the generic "show button" intent.
+    if (includesHindiSwitch && asksLingoDevButton) {
+      return {
+        type: "ui.hindiLingoDev",
+        metadata: {
+          confidence: 0.9,
+          originalText,
+          detectedLanguage,
+        },
+      };
+    }
+
+    // Combined demo sequence: show Hindi/profile first, then Kannada/calendar.
+    const asksBothHindiAndKannada =
+      (lower.includes("hindi") || text.includes("हिंदी") || text.includes("हिन्दी")) &&
+      (lower.includes("kannada") || text.includes("ಕನ್ನಡ") || text.includes("ಕನ್ನಡದಲ್ಲಿ"));
+
+    const asksDemoSequence =
+      lower.includes("demo") ||
+      lower.includes("both") ||
+      lower.includes("together") ||
+      lower.includes("sequence") ||
+      (lower.includes("first") && lower.includes("then")) ||
+      (lower.includes("profile") && (lower.includes("calendar") || lower.includes("calender"))) ||
+      (text.includes("प्रोफाइल") && (text.includes("कैलेंडर") || text.includes("कैलेंड")));
+
+    if (asksBothHindiAndKannada && asksDemoSequence) {
+      return {
+        type: "ui.demoHiThenKn",
+        metadata: {
+          confidence: 0.9,
+          originalText,
+          detectedLanguage,
+        },
+      };
+    }
+
+    if (includesLingoDev && includesButton) {
+      return {
+        type: "ui.showLingoButton",
+        metadata: {
+          confidence: 0.9,
+          originalText,
+          detectedLanguage,
+        },
+      };
+    }
+
+    const includesAiInsights =
+      (lower.includes("ai") && lower.includes("insight")) ||
+      text.includes("एआई इनसाइट") ||
+      text.includes("ai insights") ||
+      text.includes("ai इनसाइट्स") ||
+      text.includes("इनसाइट्स");
+
+    if (includesAiInsights) {
+      return {
+        type: "ui.showAiInsights",
+        metadata: {
+          confidence: 0.9,
+          originalText,
+          detectedLanguage,
+        },
+      };
+    }
+
+    // Kannada calendar demo: "ಈ ತಿಂಗಳಲ್ಲಿ ಒಂದು ಹೊಸ ಈವೆಂಟ್ ಸೇರಿಸಿ" -> add an event.
+    // Some detectors strip/mangle, so we match a few safe stems.
+    const includesKannadaCalendar =
+      text.includes("ಕ್ಯಾಲೆಂಡ") ||
+      text.includes("ಕ್ಯಾಲೆಂಡರ್") ||
+      lower.includes("calendar");
+
+    const includesKannadaThisMonth =
+      text.includes("ಈ ತಿಂ") ||
+      text.includes("ಈ ತಿಂದು") ||
+      text.includes("ಈ ತಿಂಗಳು") ||
+      text.includes("ಈ ತಿಂಗಳಲ್ಲಿ") ||
+      // Stripped form often becomes "ಈ ತ..."
+      /ಈ\s*ತ/i.test(text);
+
+    const includesKannadaEventWord =
+      text.includes("ಈವೆಂಟ್") ||
+      text.includes("ಇವೆಂಟ್") ||
+      // Stripped form: "ಈವೆಂಟ್" -> "ಈವಟ"
+      text.includes("ಈವಟ") ||
+      lower.includes("event");
+
+    const includesKannadaAdd =
+      text.includes("ಸೇರ") ||
+      text.includes("ಸೇರಿಸಿ") ||
+      text.includes("ಸೇರಿಸು") ||
+      // Stripped form: "ಸೇರಿಸಿ" -> "ಸರಸ"
+      text.includes("ಸರಸ") ||
+      lower.includes("add");
+
+    if ((includesKannadaCalendar || includesKannadaThisMonth) && includesKannadaEventWord && includesKannadaAdd) {
+      return {
+        type: "ui.calendarKnAddEvent",
+        metadata: {
+          confidence: 0.9,
+          originalText,
+          detectedLanguage,
+        },
+      };
+    }
+
+    // Deterministic Kannada screenshot demo routing.
+    // Rule: If transcript contains Kannada characters AND mentions calendar/kannada keywords.
+    // (Append-only; does not affect Hindi logic.)
+    const hasKannadaChars = /[\u0C80-\u0CFF]/.test(text);
+    // Some detectors strip vowel signs/diacritics (e.g. "ಕ್ಯಾಲೆಂಡರ್" -> "ಕಯಲಡರ", "ಕನ್ನಡ" -> "ಕನನಡ").
+    const stripped = text.replace(/[\u0CBE-\u0CCD\u0CD5\u0CD6]/g, "");
+    const mentionsKannadaCalendarKeyword =
+      text.includes("ಕ್ಯಾಲೆಂಡರ್") ||
+      text.includes("ಕನ್ನಡ") ||
+      stripped.includes("ಕಯಲಡರ") ||
+      stripped.includes("ಕನನಡ");
+    if (hasKannadaChars && mentionsKannadaCalendarKeyword) {
+      return {
+        type: "KANNADA_CALENDAR_DEMO",
+        metadata: {
+          confidence: 0.9,
+          originalText,
+          detectedLanguage,
+        },
+      };
+    }
+
+    const includesMinimalMode =
+      lower.includes("switch to minimal mode") ||
+      lower.includes("minimal mode") ||
+      lower.includes("minimal") && lower.includes("mode");
+
+    const includesInvestor = /\binvest\w*\b/i.test(lower);
+    const includesAnalytics = /\banalyt\w*\b/i.test(lower) || lower.includes("analysis") || lower.includes("insights");
+    const includesDashboard = lower.includes("dashboard") || /\bdash\w*\b/i.test(lower);
+    const asksConvertView = /\b(convert|turn|make)\b/i.test(lower) || lower.includes("into");
+    const includesMinimal = lower.includes("minimal");
+
+    if (includesMinimal && (includesAnalytics || includesDashboard) && asksConvertView) {
+      return {
+        type: "ui.activatePreset",
+        value: "minimal_investor",
+        metadata: {
+          confidence: 0.9,
+          originalText,
+          detectedLanguage,
+        },
+      };
+    }
+
+    if (includesMinimalMode) {
+      return {
+        type: "ui.switchMinimalMode",
+        metadata: {
+          confidence: 0.9,
+          originalText,
+          detectedLanguage,
+        },
+      };
+    }
+
+    // (Hindi+LingoDev handled above)
+
     if (!includesButton) return null;
 
     // Extract a name/label if user said “named/called …” (English) or “नाम … / जिसका नाम …” (Hindi)
@@ -173,15 +362,33 @@ export function normalizeIntent(
     };
   };
 
+  // High-priority override: if the transcript clearly asks for Hindi + Lingo button,
+  // always honor that even if the upstream detector returns a generic component intent.
+  const inferred = inferFromTranscript();
+  if (inferred?.type === "ui.hindiLingoDev") return inferred;
+
   if (!rawIntent || typeof rawIntent !== "object") {
-    return inferFromTranscript() || { type: "none", metadata: { confidence: 0, originalText: transcript, detectedLanguage } };
+    return inferred || { type: "none", metadata: { confidence: 0, originalText: transcript, detectedLanguage } };
   }
   
   const raw = rawIntent as Record<string, unknown>;
+
+  // Upstream models sometimes return custom types directly.
+  if (typeof raw.type === "string" && raw.type === "calendar_kn_add_event") {
+    return {
+      type: "ui.calendarKnAddEvent",
+      metadata: {
+        confidence: 1,
+        originalText: transcript,
+        detectedLanguage,
+      },
+    };
+  }
+
   const type = normalizeIntentType(raw.type);
   
   if (type === "none") {
-    return inferFromTranscript() || { type: "none", metadata: { confidence: 0.5, originalText: transcript, detectedLanguage } };
+    return inferred || { type: "none", metadata: { confidence: 0.5, originalText: transcript, detectedLanguage } };
   }
   
   const intent: VoiceIntent = {

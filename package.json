@@ -6,7 +6,11 @@
     "dev": "next dev -p 3006",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "shot:profile-hi": "node scripts/screenshot-profile-hi.js",
+    "shot:profile-hi-shot": "node scripts/screenshot-profile-hi-shot.js",
+    "shot:calendar-kn-shot": "node scripts/screenshot-calendar-kn-shot.js",
+    "shot:calendar-kn-overlay": "node scripts/screenshot-calendar-kn-overlay.js"
   },
   "dependencies": {
     "@babel/parser": "^7.29.0",
@@ -27,6 +31,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
     "tailwindcss": "^4",
+    "playwright": "^1.52.0",
     "typescript": "^5"
   }
 }

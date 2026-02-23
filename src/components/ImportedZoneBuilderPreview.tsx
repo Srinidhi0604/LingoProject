@@ -16,6 +16,7 @@ type DevServerStatus = {
 
 export type ZoneBuilderBridge = {
   postToBuilder: (msg: VoxeraParentToBuilderMessage) => void;
+  postToPreview: (msg: unknown) => void;
 };
 
 type Props = {
@@ -28,10 +29,12 @@ function withBuilderParam(url: string): string {
   try {
     const u = new URL(url);
     u.searchParams.set("voxeraBuilder", "1");
+    u.searchParams.set("voxeraShowLang", "1");
     return u.toString();
   } catch {
     const hasQ = url.includes("?");
-    return url + (hasQ ? "&" : "?") + "voxeraBuilder=1";
+    const join = hasQ ? "&" : "?";
+    return url + join + "voxeraBuilder=1&voxeraShowLang=1";
   }
 }
 
@@ -40,15 +43,22 @@ export default function ImportedZoneBuilderPreview({ workspaceId, onBridgeReady,
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
 
-  const postToBuilder = useCallback((msg: VoxeraParentToBuilderMessage) => {
+  const postToPreview = useCallback((msg: unknown) => {
     const win = iframeRef.current?.contentWindow;
     if (!win) return;
     win.postMessage(msg, "*");
   }, []);
 
+  const postToBuilder = useCallback(
+    (msg: VoxeraParentToBuilderMessage) => {
+      postToPreview(msg);
+    },
+    [postToPreview],
+  );
+
   useEffect(() => {
-    onBridgeReady({ postToBuilder });
-  }, [onBridgeReady, postToBuilder]);
+    onBridgeReady({ postToBuilder, postToPreview });
+  }, [onBridgeReady, postToBuilder, postToPreview]);
 
   const startDevServer = useCallback(async () => {
     const response = await fetch("/api/devserver", {

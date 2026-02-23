@@ -11,7 +11,7 @@ export default async function createNextConfig(): Promise<NextConfig> {
   return await withLingo(nextConfig, {
     sourceRoot: "./src/app",
     sourceLocale: "en",
-    targetLocales: ["kn", "hi"],
+    targetLocales: ["kn", "hi", "es"],
     models: "lingo.dev",
     dev: {
       usePseudotranslator: false,

@@ -14,6 +14,15 @@ export type IntentType =
   | "file.update"
   | "file.delete"
   | "directory.create"
+  | "ui.showLingoButton"
+  | "ui.showAiInsights"
+  | "ui.switchMinimalMode"
+  | "ui.hindiLingoDev"
+  | "ui.calendarKnAddEvent"
+  | "ui.demoHiThenKn"
+  | "ui.activatePreset"
+  | "KANNADA_CALENDAR_DEMO"
+  | "HINDI_PROFILE_DEMO"
   | "none";
 
 export type ComponentType =
@@ -97,6 +106,15 @@ export const VALID_INTENT_TYPES: IntentType[] = [
   "file.update",
   "file.delete",
   "directory.create",
+  "ui.showLingoButton",
+  "ui.showAiInsights",
+  "ui.switchMinimalMode",
+  "ui.hindiLingoDev",
+  "ui.calendarKnAddEvent",
+  "ui.demoHiThenKn",
+  "ui.activatePreset",
+  "KANNADA_CALENDAR_DEMO",
+  "HINDI_PROFILE_DEMO",
   "none",
 ];
 

@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useRef, useCallback, useMemo, useEffect } from "react";
+import { useState, useRef, useCallback, useMemo, useEffect, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
 import { useLingoContext } from "@lingo.dev/compiler/react";
 import { VoiceIntent } from "@/types/intent";
 import { FileNode, isFile, isDirectory } from "@/types/filesystem";
@@ -23,14 +24,17 @@ import InspectorPanel from "@/components/InspectorPanel";
 
 import ImportedZoneBuilderPreview, { type ZoneBuilderBridge } from "@/components/ImportedZoneBuilderPreview";
 import ZoneInspectorPanel from "@/components/ZoneInspectorPanel";
+import GlobalLingoButton from "@/components/GlobalLingoButton";
+import AiInsightsPanel from "@/components/AiInsightsPanel";
 
 import type { ZoneLayout, ZoneSchema, ZoneSelection, VoxeraBuilderToParentMessage } from "@/types/zoneBuilder";
 
 import { type BuilderComponentType, type BuilderNode } from "@/builder/schema";
 import { addChild } from "@/builder/mutations";
+import { undo, redo } from "@/builder/history";
 import { useVisualEngine } from "@/visual/useVisualEngine";
 
-type SupportedLocale = "en" | "kn" | "hi";
+type SupportedLocale = "en" | "kn" | "hi" | "es";
 
 type APIResponse = {
   success: boolean;
@@ -68,6 +72,7 @@ const DEFAULT_LAYOUT: LayoutState = {
 };
 
 function IDEContent() {
+  const router = useRouter();
   const { locale, setLocale } = useLingoContext();
   const workspace = useWorkspace();
   const [operations, setOperations] = useState<OperationWithShadow[]>([]);
@@ -94,11 +99,82 @@ function IDEContent() {
   });
 
   const [languagePrompt, setLanguagePrompt] = useState<{ locale: SupportedLocale } | null>(null);
+  const [hindiConfirm, setHindiConfirm] = useState<{ transcript: string; detectedLanguage: string } | null>(null);
+  const [kannadaConfirm, setKannadaConfirm] = useState<{ transcript: string; detectedLanguage: string } | null>(null);
 
   const [zoneSchemas, setZoneSchemas] = useState<Record<string, ZoneSchema>>({});
   const [zoneActiveRouteKey, setZoneActiveRouteKey] = useState<string | null>(null);
   const [zoneSelection, setZoneSelection] = useState<ZoneSelection | null>(null);
   const [zoneBridge, setZoneBridge] = useState<ZoneBuilderBridge | null>(null);
+  const [previewPathname, setPreviewPathname] = useState<string>("/");
+  const [showLingoButton, setShowLingoButton] = useState(false);
+  const [showAiInsights, setShowAiInsights] = useState(false);
+
+  const [desiredPreviewRuntime, setDesiredPreviewRuntime] = useState<{
+    locale?: SupportedLocale;
+    showLingoButton?: boolean;
+    navigateTo?: string;
+  }>({});
+
+  const lastAutoDemoRef = useRef<{ key: "hi" | "kn"; at: number } | null>(null);
+
+  const demoSequenceTimerRef = useRef<number | null>(null);
+
+  const applyDesiredPreviewRuntime = useCallback(
+    (next: { locale?: SupportedLocale; showLingoButton?: boolean; navigateTo?: string }) => {
+      // Persist desired state even if the iframe bridge isn't ready yet.
+      setDesiredPreviewRuntime((prev) => ({ ...prev, ...next }));
+
+      if (workspace.activeWorkspace?.type !== "imported" || !zoneBridge?.postToPreview) return;
+
+      if (next.locale) {
+        zoneBridge.postToPreview({ type: "voxera:overlay", action: "setLanguage", value: next.locale });
+      }
+
+      if (typeof next.showLingoButton === "boolean") {
+        zoneBridge.postToPreview({
+          type: "voxera:demo",
+          action: next.showLingoButton ? "showLingoButton" : "hideLingoButton",
+        });
+      }
+
+      if (next.navigateTo) {
+        const navMsg = { type: "voxera:demo", action: "navigate", value: next.navigateTo } as const;
+        zoneBridge.postToPreview(navMsg);
+        // Re-send multiple times to ensure the preview bridge receives the message.
+        setTimeout(() => zoneBridge.postToPreview(navMsg), 300);
+        setTimeout(() => zoneBridge.postToPreview(navMsg), 800);
+        setTimeout(() => zoneBridge.postToPreview(navMsg), 1500);
+        setTimeout(() => zoneBridge.postToPreview(navMsg), 2500);
+      }
+    },
+    [workspace.activeWorkspace?.type, zoneBridge],
+  );
+
+  useEffect(() => {
+    if (workspace.activeWorkspace?.type !== "imported") return;
+    if (!zoneBridge?.postToPreview) return;
+
+    // Apply any pending desired runtime state once the bridge is ready.
+    if (desiredPreviewRuntime.locale) {
+      zoneBridge.postToPreview({ type: "voxera:overlay", action: "setLanguage", value: desiredPreviewRuntime.locale });
+    }
+    if (typeof desiredPreviewRuntime.showLingoButton === "boolean") {
+      zoneBridge.postToPreview({
+        type: "voxera:demo",
+        action: desiredPreviewRuntime.showLingoButton ? "showLingoButton" : "hideLingoButton",
+      });
+    }
+    if (desiredPreviewRuntime.navigateTo) {
+      zoneBridge.postToPreview({ type: "voxera:demo", action: "navigate", value: desiredPreviewRuntime.navigateTo });
+    }
+  }, [
+    desiredPreviewRuntime.locale,
+    desiredPreviewRuntime.showLingoButton,
+    desiredPreviewRuntime.navigateTo,
+    workspace.activeWorkspace?.type,
+    zoneBridge,
+  ]);
 
   useEffect(() => {
     try {
@@ -184,9 +260,37 @@ function IDEContent() {
   const commitVisualSchema = visual.commitSchema;
   const initializeVisualFromCode = visual.initializeFromCode;
 
-  const onImportedBuilderMessage = useCallback((msg: VoxeraBuilderToParentMessage) => {
+  const onImportedBuilderMessage = useCallback((msg: VoxeraBuilderToParentMessage | any) => {
+    if (msg?.type === "voxera:route") {
+      const nextPath = typeof msg.value === "string" ? msg.value : "";
+      if (nextPath) setPreviewPathname(nextPath);
+      return;
+    }
+
     if (msg.type === "voxera:ready" || msg.type === "voxera:schemaChanged") {
       setZoneSchemas((prev) => ({ ...prev, [msg.routeKey]: msg.schema }));
+
+      // Preview reloads can drop prior postMessage commands. Re-apply desired runtime state
+      // (locale/button/navigate) whenever the embedded runtime reports it is ready.
+      if (msg.type === "voxera:ready" && workspace.activeWorkspace?.type === "imported" && zoneBridge?.postToPreview) {
+        if (desiredPreviewRuntime.locale) {
+          zoneBridge.postToPreview({ type: "voxera:overlay", action: "setLanguage", value: desiredPreviewRuntime.locale });
+        }
+        if (typeof desiredPreviewRuntime.showLingoButton === "boolean") {
+          zoneBridge.postToPreview({
+            type: "voxera:demo",
+            action: desiredPreviewRuntime.showLingoButton ? "showLingoButton" : "hideLingoButton",
+          });
+        }
+        if (desiredPreviewRuntime.navigateTo) {
+          const navMsg = { type: "voxera:demo", action: "navigate", value: desiredPreviewRuntime.navigateTo } as const;
+          zoneBridge.postToPreview(navMsg);
+          setTimeout(() => zoneBridge.postToPreview(navMsg), 300);
+          setTimeout(() => zoneBridge.postToPreview(navMsg), 800);
+          setTimeout(() => zoneBridge.postToPreview(navMsg), 1500);
+          setTimeout(() => zoneBridge.postToPreview(navMsg), 2500);
+        }
+      }
       return;
     }
 
@@ -195,7 +299,7 @@ function IDEContent() {
       setZoneSelection(msg.selection);
       return;
     }
-  }, []);
+  }, [desiredPreviewRuntime.locale, desiredPreviewRuntime.navigateTo, desiredPreviewRuntime.showLingoButton, workspace.activeWorkspace?.type, zoneBridge]);
 
   const activeZoneSchema = useMemo(() => {
     if (zoneActiveRouteKey && zoneSchemas[zoneActiveRouteKey]) return zoneSchemas[zoneActiveRouteKey];
@@ -234,6 +338,178 @@ function IDEContent() {
   const executeIntent = useCallback(async (intent: VoiceIntent, transcript: string, detectedLanguage: string) => {
     if (!intent || intent.type === "none") {
       console.log("[Voice Engine] No valid intent to execute");
+      return;
+    }
+
+    // Imported workspaces are demo/preview-only: do not mutate their source via voice component ops.
+    if (workspace.activeWorkspace?.type === "imported" && intent.type.startsWith("component.")) {
+      const operation = createOperation(transcript, transcript, detectedLanguage);
+      const completedOp = updateOperationStatus(operation, "completed", "Preview updated (no code edits in imported workspace).");
+      setOperations((prev) => [completedOp, ...prev]);
+      setCurrentOperation(null);
+      return;
+    }
+
+    if (intent.type === "ui.showLingoButton") {
+      if (workspace.activeWorkspace?.type === "imported" && zoneBridge?.postToPreview) {
+        applyDesiredPreviewRuntime({ showLingoButton: true });
+      } else {
+        setShowLingoButton(true);
+      }
+      const operation = createOperation(transcript, transcript, detectedLanguage);
+      const completedOp = updateOperationStatus(operation, "completed", "लिंगो देव बटन दिखाया गया");
+      setOperations(prev => [completedOp, ...prev]);
+      setCurrentOperation(null);
+      return;
+    }
+
+    if (intent.type === "ui.showAiInsights") {
+      setShowAiInsights(true);
+      const operation = createOperation(transcript, transcript, detectedLanguage);
+      const completedOp = updateOperationStatus(operation, "completed", "AI इनसाइट्स पैनल दिखाया गया");
+      setOperations(prev => [completedOp, ...prev]);
+      setCurrentOperation(null);
+      return;
+    }
+
+    if (intent.type === "ui.switchMinimalMode") {
+      if (workspace.activeWorkspace?.type === "imported" && zoneBridge?.postToPreview) {
+        zoneBridge.postToPreview({ type: "voxera:overlay", action: "setLayoutMode", value: "minimal" });
+      }
+      const operation = createOperation(transcript, transcript, detectedLanguage);
+      const completedOp = updateOperationStatus(operation, "completed", "Switched to minimal mode");
+      setOperations((prev) => [completedOp, ...prev]);
+      setCurrentOperation(null);
+      return;
+    }
+
+    if (intent.type === "ui.activatePreset" && intent.value === "minimal_investor") {
+      if (workspace.activeWorkspace?.type === "imported" && zoneBridge?.postToPreview) {
+        zoneBridge.postToPreview({ type: "voxera:overlay", action: "activatePreset", value: "minimal_investor" });
+      }
+      const operation = createOperation(transcript, transcript, detectedLanguage);
+      const completedOp = updateOperationStatus(operation, "completed", "Minimal investor mode activated.");
+      setOperations((prev) => [completedOp, ...prev]);
+      setCurrentOperation(null);
+      return;
+    }
+
+    if (intent.type === "ui.calendarKnAddEvent") {
+      setLocale("kn" as any);
+      if (workspace.activeWorkspace?.type === "imported") {
+        applyDesiredPreviewRuntime({
+          locale: "kn",
+          navigateTo: "/calendar-kn-shot?voxeraLocale=kn",
+        });
+      }
+
+      const operation = createOperation(transcript, transcript, detectedLanguage);
+      const completedOp = updateOperationStatus(operation, "completed", "Kannada calendar event added.");
+      setOperations((prev) => [completedOp, ...prev]);
+      setCurrentOperation(null);
+      return;
+    }
+
+    // Deterministic Kannada screenshot demo intent.
+    if ((intent as any).type === "KANNADA_CALENDAR_DEMO") {
+      // No longer gated on previewPathname — we navigate to the calendar route directly.
+      const detectedIsKannada = String(detectedLanguage || "").toLowerCase().startsWith("kn");
+      const transcriptHasKannada = /[\u0C80-\u0CFF]/.test(transcript || "");
+      if ((detectedIsKannada || transcriptHasKannada) && String(locale) !== "kn") {
+        setKannadaConfirm({ transcript, detectedLanguage });
+        return;
+      }
+
+      setLocale("kn" as any);
+      if (workspace.activeWorkspace?.type === "imported") {
+        applyDesiredPreviewRuntime({
+          locale: "kn",
+          navigateTo: "/calendar-kn-shot?voxeraBuilder=1&voxeraLocale=kn",
+        });
+      }
+
+      const operation = createOperation(transcript, transcript, detectedLanguage);
+      const completedOp = updateOperationStatus(operation, "completed", "Kannada calendar screenshot preview shown.");
+      setOperations((prev) => [completedOp, ...prev]);
+      setCurrentOperation(null);
+      return;
+    }
+
+    // Isolated Hindi (Profile-only) demo intent.
+    if ((intent as any).type === "HINDI_PROFILE_DEMO") {
+      setLocale("hi");
+      if (workspace.activeWorkspace?.type === "imported") {
+        applyDesiredPreviewRuntime({
+          locale: "hi",
+          showLingoButton: true,
+          navigateTo: "/profile-hi-shot?voxeraBuilder=1&voxeraLocale=hi&voxeraShowLingo=1",
+        });
+      } else {
+        setShowLingoButton(true);
+      }
+
+      const operation = createOperation(transcript, transcript, detectedLanguage);
+      const completedOp = updateOperationStatus(operation, "completed", "Hindi profile screenshot preview shown.");
+      setOperations((prev) => [completedOp, ...prev]);
+      setCurrentOperation(null);
+      return;
+    }
+
+    if (intent.type === "ui.demoHiThenKn") {
+      // Cancel any in-flight sequence.
+      if (demoSequenceTimerRef.current) {
+        window.clearTimeout(demoSequenceTimerRef.current);
+        demoSequenceTimerRef.current = null;
+      }
+
+      // Step 1: Hindi profile overlay with the single real Lingo button.
+      setLocale("hi");
+      if (workspace.activeWorkspace?.type === "imported") {
+        applyDesiredPreviewRuntime({
+          locale: "hi",
+          showLingoButton: true,
+          navigateTo: "/profile-hi-shot?voxeraLocale=hi&voxeraShowLingo=1",
+        });
+      } else {
+        setShowLingoButton(true);
+      }
+
+      // Step 2: Kannada calendar overlay.
+      demoSequenceTimerRef.current = window.setTimeout(() => {
+        setLocale("kn" as any);
+        if (workspace.activeWorkspace?.type === "imported") {
+          applyDesiredPreviewRuntime({
+            locale: "kn",
+            showLingoButton: false,
+            navigateTo: "/calendar-kn-shot?voxeraLocale=kn",
+          });
+        }
+      }, 2800);
+
+      const operation = createOperation(transcript, transcript, detectedLanguage);
+      const completedOp = updateOperationStatus(operation, "completed", "Hindi → Kannada demo sequence started.");
+      setOperations((prev) => [completedOp, ...prev]);
+      setCurrentOperation(null);
+      return;
+    }
+
+    if (intent.type === "ui.hindiLingoDev") {
+      setLocale("hi");
+      if (workspace.activeWorkspace?.type === "imported") {
+        applyDesiredPreviewRuntime({
+          locale: "hi",
+          showLingoButton: true,
+          navigateTo: "/profile-hi-shot?voxeraLocale=hi&voxeraShowLingo=1",
+        });
+      } else {
+        setShowLingoButton(true);
+      }
+
+      const operation = createOperation(transcript, transcript, detectedLanguage);
+      const completedOp = updateOperationStatus(operation, "completed", "Hindi preview shown. Lingo Dev button visible.");
+      setOperations((prev) => [completedOp, ...prev]);
+      setCurrentOperation(null);
+      setHindiConfirm(null);
       return;
     }
 
@@ -459,8 +735,26 @@ function IDEContent() {
 
   const startRecording = async () => {
     try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setStatusMessage("Microphone not supported in this browser");
+        return;
+      }
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
+
+      const supportedTypes = [
+        "audio/webm;codecs=opus",
+        "audio/webm",
+        "audio/mp4",
+      ];
+      const chosenMimeType =
+        typeof MediaRecorder !== "undefined" && typeof MediaRecorder.isTypeSupported === "function"
+          ? supportedTypes.find((t) => MediaRecorder.isTypeSupported(t))
+          : undefined;
+
+      const mediaRecorder = chosenMimeType
+        ? new MediaRecorder(stream, { mimeType: chosenMimeType })
+        : new MediaRecorder(stream);
+
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
 
@@ -471,7 +765,7 @@ function IDEContent() {
       };
 
       mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+        const audioBlob = new Blob(audioChunksRef.current, { type: chosenMimeType || "audio/webm" });
         await sendAudio(audioBlob);
         stream.getTracks().forEach((track) => track.stop());
       };
@@ -507,14 +801,99 @@ function IDEContent() {
         body: formData,
       });
 
-      const data: APIResponse = await response.json();
+      let data: APIResponse | null = null;
+      try {
+        data = (await response.json()) as APIResponse;
+      } catch {
+        data = null;
+      }
+
+      if (!data) {
+        setStatusMessage("Voice API error (invalid response)");
+        return;
+      }
+
+      if (!data.success && (data.message || "").toLowerCase().includes("api not configured")) {
+        setStatusMessage("Voice not configured: set GEMINI_API_KEY");
+        return;
+      }
 
       if (data.success && data.transcript) {
-        setStatusMessage("");
+        // Hard requirement: if Hindi/Kannada is detected, immediately show the deterministic
+        // screenshot preview routes (no prompt, no dependency on intent).
+        const detected = String(data.detectedLocale || "").toLowerCase();
+        const transcriptText = data.transcript || "";
+        const transcriptHasHindi = /[\u0900-\u097F]/.test(transcriptText);
+        const transcriptHasKannada = /[\u0C80-\u0CFF]/.test(transcriptText);
 
-        if (data.detectedLocale && data.detectedLocale !== locale) {
-          setLanguagePrompt({ locale: data.detectedLocale });
+        const wantsHindi = detected === "hi" || transcriptHasHindi;
+        const wantsKannada = detected === "kn" || transcriptHasKannada;
+
+        // Debounce so repeated API responses don't spam navigation.
+        const now = Date.now();
+        const canFire = (key: "hi" | "kn") => {
+          const last = lastAutoDemoRef.current;
+          if (!last) return true;
+          if (last.key !== key) return true;
+          return now - last.at > 1500;
+        };
+
+        if (workspace.activeWorkspace?.type === "imported" && (wantsHindi || wantsKannada)) {
+          if (wantsHindi && canFire("hi")) {
+            lastAutoDemoRef.current = { key: "hi", at: now };
+            setLocale("hi" as any);
+            applyDesiredPreviewRuntime({
+              locale: "hi",
+              showLingoButton: true,
+              navigateTo: "/profile-hi-shot?voxeraBuilder=1&voxeraLocale=hi&voxeraShowLingo=1",
+            });
+            setStatusMessage("Hindi detected → showing profile preview");
+          } else if (wantsKannada && canFire("kn")) {
+            lastAutoDemoRef.current = { key: "kn", at: now };
+            setLocale("kn" as any);
+            applyDesiredPreviewRuntime({
+              locale: "kn",
+              showLingoButton: false,
+              navigateTo: "/calendar-kn-shot?voxeraBuilder=1&voxeraLocale=kn",
+            });
+            setStatusMessage("Kannada detected → showing calendar preview");
+          }
         }
+
+        if (!data.intent || data.intent.type === "none") {
+          const lower = transcriptText.toLowerCase();
+          const matchesMinimalInvestor =
+            lower.includes("minimal") &&
+            (/(\banalyt\w*\b)/i.test(lower) || /\bdash\w*\b/i.test(lower)) &&
+            /\b(convert|turn|make)\b/i.test(lower);
+
+          if (matchesMinimalInvestor) {
+            const synthesizedIntent = {
+              type: "ui.activatePreset",
+              value: "minimal_investor",
+              metadata: {
+                confidence: 0.8,
+                originalText: transcriptText,
+                detectedLanguage: data.detectedLocale || locale,
+              },
+            } as const;
+
+            void executeIntent(synthesizedIntent as any, transcriptText, data.detectedLocale || locale);
+            setStatusMessage("");
+            return;
+          }
+
+          const short = transcriptText.length > 60 ? transcriptText.slice(0, 60).trim() + "…" : transcriptText;
+          setStatusMessage(`Heard: ${short} (no command)`);
+
+          const operation = createOperation(transcriptText, transcriptText, data.detectedLocale || locale);
+          const completedOp = updateOperationStatus(operation, "completed", `Heard: ${short}`);
+          setOperations((prev) => [completedOp, ...prev]);
+          setCurrentOperation(null);
+          return;
+        }
+
+        setStatusMessage("");
 
         if (data.intent) {
           void executeIntent(data.intent, data.transcript, data.detectedLocale || locale);
@@ -528,9 +907,69 @@ function IDEContent() {
     }
   };
 
-  const handleLocaleChange = useCallback((newLocale: string) => {
-    setLocale(newLocale as SupportedLocale);
-  }, [setLocale]);
+  const handleLocaleChange = useCallback(
+    (newLocale: string) => {
+      const raw = String(newLocale || "").toLowerCase();
+      const normalized: SupportedLocale = raw === "hi" || raw === "kn" || raw === "es" ? (raw as any) : "en";
+
+      setLocale(normalized as any);
+
+      if (workspace.activeWorkspace?.type === "imported") {
+        applyDesiredPreviewRuntime({ locale: normalized });
+      }
+    },
+    [applyDesiredPreviewRuntime, setLocale, workspace.activeWorkspace?.type],
+  );
+
+  const confirmHindiMode = useCallback(() => {
+    if (!hindiConfirm) return;
+
+    // Toggle runtime state only.
+    setLocale("hi");
+
+    if (workspace.activeWorkspace?.type === "imported") {
+      applyDesiredPreviewRuntime({
+        locale: "hi",
+        showLingoButton: true,
+        navigateTo: "/profile-hi-shot?voxeraBuilder=1&voxeraLocale=hi&voxeraShowLingo=1",
+      });
+    } else {
+      setShowLingoButton(true);
+    }
+
+    const operation = createOperation(hindiConfirm.transcript, hindiConfirm.transcript, hindiConfirm.detectedLanguage);
+    const completedOp = updateOperationStatus(operation, "completed", "Hindi mode enabled. Lingo Dev button visible.");
+    setOperations((prev) => [completedOp, ...prev]);
+    setCurrentOperation(null);
+    setHindiConfirm(null);
+  }, [applyDesiredPreviewRuntime, hindiConfirm, setLocale, workspace.activeWorkspace?.type]);
+
+  const confirmKannadaMode = useCallback(() => {
+    if (!kannadaConfirm) return;
+
+    setLocale("kn" as any);
+
+    if (workspace.activeWorkspace?.type === "imported") {
+      applyDesiredPreviewRuntime({
+        locale: "kn",
+        navigateTo: "/calendar-kn-shot?voxeraBuilder=1&voxeraLocale=kn",
+      });
+    }
+
+    const operation = createOperation(kannadaConfirm.transcript, kannadaConfirm.transcript, kannadaConfirm.detectedLanguage);
+    const completedOp = updateOperationStatus(operation, "completed", "Kannada mode enabled. Showing calendar screenshot preview.");
+    setOperations((prev) => [completedOp, ...prev]);
+    setCurrentOperation(null);
+    setKannadaConfirm(null);
+  }, [applyDesiredPreviewRuntime, kannadaConfirm, router, setLocale, workspace.activeWorkspace?.type]);
+
+  const cancelKannadaMode = useCallback(() => {
+    setKannadaConfirm(null);
+  }, []);
+
+  const cancelHindiMode = useCallback(() => {
+    setHindiConfirm(null);
+  }, []);
 
   if (!workspace.activeWorkspace) {
     return (
@@ -594,18 +1033,23 @@ function IDEContent() {
 
   const isImportedWorkspace = workspace.activeWorkspace.type === "imported";
 
-  const builderNode = isImportedWorkspace ? (
-    <ImportedZoneBuilderPreview
-      workspaceId={workspaceId}
-      onBridgeReady={setZoneBridge}
-      onBuilderMessage={onImportedBuilderMessage}
-    />
-  ) : (
-    <BuilderCanvas
-      history={visualHistory}
-      setHistory={setHistoryForCanvas}
-      workspaceId={workspaceId}
-    />
+  const builderNode = (
+    <div className="h-full flex flex-col">
+      {showAiInsights && <AiInsightsPanel />}
+      {isImportedWorkspace ? (
+        <ImportedZoneBuilderPreview
+          workspaceId={workspaceId}
+          onBridgeReady={setZoneBridge}
+          onBuilderMessage={onImportedBuilderMessage}
+        />
+      ) : (
+        <BuilderCanvas
+          history={visualHistory}
+          setHistory={setHistoryForCanvas}
+          workspaceId={workspaceId}
+        />
+      )}
+    </div>
   );
 
   const previewNode = (
@@ -641,7 +1085,7 @@ function IDEContent() {
 
   const terminalNode = <TerminalPanel workspaceId={workspaceId} />;
 
-  const bottomTabs: Array<{ key: "terminal" | "agent"; label: string; node: JSX.Element }> = [
+  const bottomTabs: Array<{ key: "terminal" | "agent"; label: string; node: ReactNode }> = [
     { key: "terminal", label: "Terminal", node: terminalNode },
     { key: "agent", label: "Agent", node: agentNode },
   ];
@@ -697,6 +1141,29 @@ function IDEContent() {
         mode={mode}
         onModeChange={setMode}
         fileCount={allFiles.length}
+        currentLocale={locale}
+        onLocaleChange={handleLocaleChange}
+        workbench={layout.workbench}
+        onWorkbenchChange={(wb) => {
+          if (wb === "builder" && workspace.activeWorkspace?.type !== "imported") {
+            const pagePath = computeEntryPagePath();
+            initializeVisualFromCode(pagePath);
+          }
+          setLayout((p) => ({ ...p, workbench: wb }));
+        }}
+        onNewFile={() => {
+          const name = window.prompt("File name:", "untitled.tsx");
+          if (name) {
+            workspace.updateFile(name, "");
+            workspace.selectFile(name);
+          }
+        }}
+        onExportProject={() => {
+          const wsId = workspace.activeWorkspace?.id;
+          if (wsId) window.open(`/api/workspace?action=export&workspaceId=${encodeURIComponent(wsId)}`);
+        }}
+        onUndo={() => setHistoryForCanvas((prev) => undo(prev))}
+        onRedo={() => setHistoryForCanvas((prev) => redo(prev))}
       />
 
       <div className="h-10 flex items-center justify-between px-4 border-b border-white/10 bg-[#0A0A0A] select-none">
@@ -745,7 +1212,30 @@ function IDEContent() {
         currentLocale={locale}
         onLocaleChange={handleLocaleChange}
         statusMessage={statusMessage}
+        confirmPrompt={
+          kannadaConfirm
+            ? {
+                title: "Switch language?",
+                message: "Continue building in Kannada?",
+                confirmLabel: "Yes",
+                cancelLabel: "No",
+                onConfirm: confirmKannadaMode,
+                onCancel: cancelKannadaMode,
+              }
+            : hindiConfirm
+              ? {
+                  title: "Hindi detected",
+                  message: "We noticed you are speaking in Hindi. Continue building in Hindi?",
+                  confirmLabel: "Yes",
+                  cancelLabel: "No",
+                  onConfirm: confirmHindiMode,
+                  onCancel: cancelHindiMode,
+                }
+              : null
+        }
       />
+
+      {showLingoButton && workspace.activeWorkspace?.type !== "imported" && <GlobalLingoButton />}
 
       {languagePrompt ? (
         <div className="fixed inset-0 z-[80] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
@@ -770,7 +1260,7 @@ function IDEContent() {
               <button
                 className="px-3 py-1.5 text-xs rounded-md bg-white text-black hover:bg-zinc-200"
                 onClick={() => {
-                  setLocale(languagePrompt.locale);
+                  handleLocaleChange(languagePrompt.locale as any);
                   setLanguagePrompt(null);
                 }}
               >
